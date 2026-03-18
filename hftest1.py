@@ -5,9 +5,19 @@ import google.generativeai as genai
 import pandas as pd
 import time
 
+# --- SECRET ACCESS ---
+# Streamlit looks for 'GEMINI_API_KEY' in the Secrets menu automatically
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+except KeyError:
+    st.error("API Key not found in Secrets! Please check your Streamlit Settings.")
+    st.stop()
+
 # --- Setup ---
-st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
-st.title("🎧 Head-Fi Analyst with Page Discovery")
+st.set_page_config(page_title="Head-Fi Analyst", layout="wide")
+st.title("🎧 Head-Fi Analyst")
 
 # Initialize Session State
 if "df" not in st.session_state:
@@ -20,7 +30,6 @@ if "total_pages" not in st.session_state:
 # --- Sidebar ---
 with st.sidebar:
     st.header("1. Data Source")
-    api_key = st.text_input("Gemini API Key:", type="password")
     
     tab1, tab2 = st.tabs(["Scrape New", "Upload CSV"])
     
