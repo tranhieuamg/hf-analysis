@@ -127,8 +127,8 @@ if st.session_state.df is not None:
             st.markdown(message["content"])
 
     
-default_value = "Summarize those posts by answering these questions: 1. what are the topics being discussed? 2. what are the key points being made in each topic? 3. what brands and products are being mentioned? What are community's opinion about those brands or products? 4. Please plot a frequency bar plot of the mentioned products"
-if prompt:= st.text_input("Enter a prompt: ", value=default_value) :
+if prompt:= st.chat_input("Summarize those posts by answering these questions: 1. what are the topics being discussed? 2. what are the key points being made in each topic? 3. what brands and products are being mentioned? What are community's opinion about those brands or products? 4. Please plot a frequency bar plot of the mentioned products"
+") :
 
 
     
