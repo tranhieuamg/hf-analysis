@@ -78,16 +78,14 @@ if st.button("🚀 Start Deep Scrape"):
         st.error("Please enter your name in the sidebar!")
     else:
         data, images = [], []
-       headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+       headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
             "Referer": "https://www.google.com/",
             "DNT": "1", # Do Not Track
             "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }        
+            "Upgrade-Insecure-Requests": "1"}        
         with st.status("Gathering Intelligence...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
                 url = target_url if p == 1 else f"{target_url}page-{p}"
