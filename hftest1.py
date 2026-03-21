@@ -7,13 +7,14 @@ import time
 import re
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. CONFIG & MEMORY ---
-st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
+# --- 1. CONFIG & PERSISTENCE ---
+st.set_page_config(page_title="Head-Fi Intelligence Pro", layout="wide")
 st.title("🎧 Head-Fi Intelligence Analyst")
 
-# PASTE YOUR GOOGLE SHEET URL HERE
+# REPLACE THIS with your actual Google Sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
+# Initialize Session Memory
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
 if "total_pages" not in st.session_state: st.session_state.total_pages = 1
@@ -23,11 +24,11 @@ if "image_list" not in st.session_state: st.session_state.image_list = []
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('models/gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     st.error(f"Connection Error: {e}")
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR (CONTROLS) ---
 with st.sidebar:
     st.header("👤 Staff Activity")
     staff_name = st.text_input("Staff Name:", placeholder="Hieu")
@@ -57,6 +58,7 @@ def save_log(name, url, p_range):
     except: pass
 
 def render_chart(text):
+    """Finds [DATA] block and draws the bar chart."""
     match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
     if match:
         try:
@@ -66,19 +68,16 @@ def render_chart(text):
             st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
         except: pass
 
-# --- 4. THE SCRAPER (FIXED SYNTAX & TIMESTAMPS) ---
+# --- 4. SCRAPER ENGINE ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
         st.error("Please enter your name in the sidebar!")
     else:
         data, images = [], []
-        # Professional Headers to bypass basic bot detection
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Referer": "https://www.google.com/",
-            "DNT": "1"
+            "Referer": "https://www.google.com/"
         }
         
         with st.status("Gathering Intelligence...", expanded=True) as status:
@@ -94,28 +93,25 @@ if st.button("🚀 Start Deep Scrape"):
                         
                         if not posts:
                             status.write(f"⚠️ Page {p}: Loaded, but no posts found. Security check active?")
-                            # SECURITY DEBUGGER: Show the HTML if it fails
-                            with st.expander("Show Page HTML (Debug)"):
-                                st.code(res.text[:1000])
                         
                         for post in posts:
-                            # THE FIX: Nested Data Collection
+                            # Robust Timestamp Logic (Prioritizing data-date-string for CanJam)
                             time_tag = post.find('time')
-                            # Prioritize data-date-string for CanJam threads
-                            ts = (time_tag.get('data-date-string') or 
-                                  time_tag.get('title') or 
-                                  time_tag.get('datetime') or 
-                                  time_tag.text.strip() if time_tag else "Unknown")
+                            ts = "Unknown"
+                            if time_tag:
+                                ts = (time_tag.get('data-date-string') or 
+                                      time_tag.get('title') or 
+                                      time_tag.get('datetime') or 
+                                      time_tag.text.strip())
                             
                             content_div = post.find('div', class_='bbWrapper')
                             if content_div:
-                                # Collect Images
+                                # Gallery Collection
                                 for img in content_div.find_all('img'):
                                     img_url = img.get('src') or img.get('data-src')
                                     if img_url and "http" in img_url and "smilies" not in img_url:
                                         images.append(img_url)
                                 
-                                # SYNTAX FIXED: Dictionary is properly opened and closed
                                 data.append({
                                     "Author": post.get('data-author', 'Unknown'),
                                     "Timestamp": ts,
@@ -123,7 +119,7 @@ if st.button("🚀 Start Deep Scrape"):
                                 })
                         status.write(f"✅ Page {p} success: Found {len(posts)} posts.")
                     else:
-                        status.write(f"❌ Page {p} failed: Status {res.status_code}")
+                        status.write(f"❌ Page {p} failed: HTTP Status {res.status_code}")
                 except Exception as e:
                     status.write(f"⚠️ Page {p} error: {e}")
                 
@@ -135,7 +131,7 @@ if st.button("🚀 Start Deep Scrape"):
         save_log(staff_name, target_url, f"{start_p}-{end_p}")
         st.rerun()
 
-# --- 5. INTERFACE TABS ---
+# --- 5. MAIN INTERFACE ---
 if st.session_state.df is not None:
     t_data, t_gallery, t_chat = st.tabs(["📊 Data", "🖼️ Gallery", "💬 AI Analyst"])
     
@@ -147,15 +143,48 @@ if st.session_state.df is not None:
             cols = st.columns(2)
             for i, img in enumerate(st.session_state.image_list):
                 cols[i % 2].image(img, use_container_width=True)
-        else: st.info("No photos found.")
+        else:
+            st.info("No photos found in these pages.")
 
     with t_chat:
+        # MOBILE PRESET BUTTON
         if st.button("📋 Run Full Intelligence Report"):
-            q = """Summarize posts: 1. Topics? 2. Key points? 3. Brands/Opinions? 4. Frequency list. 
-            IMPORTANT: End with [DATA]Product:Count[DATA]"""
+            q = """Summarize posts: 
+            1. What are the topics discussed? 
+            2. What are the key points in each? 
+            3. What brands/products are mentioned and what is the sentiment? 
+            4. Provide product frequency.
+            
+            IMPORTANT: End with exactly [DATA]ProductA:5,ProductB:3[DATA]"""
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
 
+        # FIXED CHAT HISTORY RENDERING
         for msg in st.session_state.messages:
-            clean = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
+            clean_text = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
             with st.chat_message(msg["role"]):
+                st.markdown(clean_text)
+                if msg["role"] == "assistant":
+                    render_chart(msg["content"])
+
+        # CHAT INPUT
+        if prompt := st.chat_input("Ask a follow-up..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+
+# --- 6. AI LOGIC (OUTSIDE TABS) ---
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    last_q = st.session_state.messages[-1]["content"]
+    with st.chat_message("assistant"):
+        with st.spinner("Gemini is reading the thread..."):
+            context = ""
+            for _, row in st.session_state.df.iterrows():
+                context += f"[{row['Author']} at {row['Timestamp']}]: {row['Content']}\n---\n"
+            
+            try:
+                full_p = f"Context Data:\n{context[:90000]}\n\nQuestion: {last_q}"
+                response = model.generate_content(full_p)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gemini API Error: {e}")
