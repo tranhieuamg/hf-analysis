@@ -6,33 +6,41 @@ import google.generativeai as genai
 import time
 import re
 from datetime import datetime, timedelta
+from streamlit_gsheets import GSheetsConnection
 
-# --- 1. SETUP & SESSION ---
-st.set_page_config(page_title="Head-Fi Context Pro", layout="wide")
-st.title("🎧 Head-Fi Intelligence (Context & Flow Mode)")
+# --- 1. CONFIG ---
+st.set_page_config(page_title="Head-Fi Context Analyst", layout="wide")
+st.title("🎧 Head-Fi Intelligence (Context-Aware Nuclear Mode)")
+
+# Update this with your actual sheet URL
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# AI Connection
+# Connections
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error(f"AI Setup Error: {e}")
+    st.error(f"Setup Error: {e}")
 
-# --- 2. WORKING v10.1 TIME CONVERTER ---
+# --- 2. THE GMT+7 ENGINE ---
 def flexible_time_convert(val):
+    """Deep search for a valid date inside any string or number."""
     if not val: return None
     try:
+        # If it's a pure Unix timestamp (1710...)
         if str(val).isdigit():
             dt = datetime.fromtimestamp(int(val))
         else:
+            # If it's an ISO string (2026-03-21...)
             dt = datetime.fromisoformat(str(val).replace('Z', '+00:00'))
+        
         vn_time = dt + timedelta(hours=7)
         return vn_time.strftime("%b %d, %Y %I:%M %p")
     except:
-        return str(val).strip()
+        return str(val).strip() # Return the raw text (e.g., 'Today at 2:00 PM') if math fails
 
 def draw_bar_chart(text):
     match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
@@ -40,10 +48,10 @@ def draw_bar_chart(text):
         try:
             lines = [l.split(":") for l in match.group(1).strip().split("\n") if ":" in l]
             if lines:
-                chart_df = pd.DataFrame(lines, columns=["Product", "Mentions"])
-                chart_df["Mentions"] = pd.to_numeric(chart_df["Mentions"])
+                chart_df = pd.DataFrame(lines, columns=["Product", "Count"])
+                chart_df["Count"] = pd.to_numeric(chart_df["Count"])
                 st.subheader("📊 Product Mentions Frequency")
-                st.bar_chart(chart_df, x="Product", y="Mentions")
+                st.bar_chart(chart_df, x="Product", y="Count", color="#fbbf24")
         except: pass
 
 # --- 3. SIDEBAR ---
@@ -52,22 +60,21 @@ with st.sidebar:
     staff_name = st.text_input("Staff Name:", placeholder="Hieu")
     raw_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-canjam-new-york-2026-impressions-thread-march-7-8-2026.979675/")
     
-    # URL Cleaning
     base_url = re.sub(r'page-\d+/?$', '', raw_url)
     if not base_url.endswith('/'): base_url += '/'
     
     start_p = st.number_input("Start Page", min_value=1, value=33)
     end_p = st.number_input("End Page", min_value=1, value=33)
 
-# --- 4. THE CONTEXT-AWARE SCRAPER ---
-if st.button("🚀 Run Conversation Scrape"):
+# --- 4. THE NUCLEAR SCRAPER (WITH CONTEXT FLOW) ---
+if st.button("🚀 Run Nuclear Scrape"):
     if not staff_name:
         st.error("Please enter your name!")
     else:
         data = []
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
         
-        with st.status("Gathering Intelligence...", expanded=True) as status:
+        with st.status("Performing Nuclear Context Scan...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
                 url = f"{base_url}page-{p}"
                 try:
@@ -75,41 +82,117 @@ if st.button("🚀 Run Conversation Scrape"):
                     soup = BeautifulSoup(res.text, 'html.parser')
                     posts = soup.find_all('article', class_='message--post')
                     
-                    if not posts:
-                        status.write(f"⚠️ Page {p}: No posts found.")
-                        continue
-
                     for post in posts:
-                        # --- A. AUTHOR & TIMESTAMP (v10.1 Nuclear Logic) ---
-                        author = post.get('data-author', 'Unknown')
-                        time_element = post.find(lambda tag: tag.has_attr('data-time') or tag.has_attr('datetime'))
+                        # --- STEP 1: SCAN SPECIFIC HEADER ---
+                        msg_header = post.find('header', class_='message-header')
+                        raw_header_html = str(msg_header) if msg_header else "HEADER_NOT_FOUND"
                         
-                        ts = "Unknown"
-                        raw_ts_html = str(time_element) if time_element else "NOT_FOUND"
-                        
-                        if time_element:
-                            raw_val = time_element.get('data-time') or time_element.get('datetime') or time_element.get('data-date-string') or time_element.get('title')
-                            ts = flexible_time_convert(raw_val)
-
-                        # --- B. CONTENT & QUOTE HANDLING ---
+                        # --- STEP 2: EXTRACT QUOTES & REPLIES ---
                         content_div = post.find('div', class_='bbWrapper')
-                        full_context = ""
-                        raw_content_html = str(content_div) if content_div else "EMPTY"
+                        combined_content = ""
                         
                         if content_div:
-                            # 1. Capture Quoted Messages
+                            # 1. Capture and label all quotes
                             quotes = content_div.find_all('blockquote', class_='bbCodeBlock--quote')
-                            quote_summary = []
+                            quote_list = []
                             for q in quotes:
-                                q_author = q.get('data-quote', 'Unknown')
+                                q_author = q.get('data-quote', 'Someone')
                                 q_text = q.get_text(strip=True)
-                                quote_summary.append(f"[QUOTED FROM {q_author}: {q_text}]")
+                                quote_list.append(f"[QUOTED FROM {q_author}: {q_text}]")
                             
-                            # 2. Extract Original Reply (Work on a copy to keep original clean)
-                            temp_soup = BeautifulSoup(str(content_div), 'html.parser')
-                            for q in temp_soup.find_all('blockquote'):
+                            # 2. Get the actual reply text (by creating a clean copy)
+                            clean_soup = BeautifulSoup(str(content_div), 'html.parser')
+                            for q in clean_soup.find_all('blockquote'):
                                 q.decompose()
-                            reply_only = temp_soup.get_text(separator=" ", strip=True)
+                            reply_text = clean_soup.get_text(separator=" ", strip=True)
                             
-                            # 3. Combine for Gemini
-                            if quote_summary:
+                            # 3. Combine into a conversation flow
+                            if quote_list:
+                                combined_content = " ".join(quote_list) + " | REPLY: " + reply_text
+                            else:
+                                combined_content = reply_text
+
+                        # --- STEP 3: FIND TIMESTAMP (Nuclear Logic) ---
+                        ts = "Unknown"
+                        if msg_header:
+                            time_el = msg_header.find('time') or msg_header.find('span', class_='u-dt')
+                            if time_el:
+                                raw_val = time_el.get('data-time') or time_el.get('datetime') or time_el.get('title')
+                                ts = flexible_time_convert(raw_val) if raw_val else time_el.get_text().strip()
+                            else:
+                                ts = msg_header.get_text().strip()
+
+                        if ts == "Unknown" or not ts:
+                            time_element = post.find(lambda tag: tag.has_attr('data-time') or tag.has_attr('datetime'))
+                            if time_element:
+                                raw_val = time_element.get('data-time') or time_element.get('datetime')
+                                ts = flexible_time_convert(raw_val)
+
+                        # --- STEP 4: SAVE ---
+                        author = post.get('data-author', 'Unknown')
+                        if combined_content:
+                            data.append({
+                                "Author": author,
+                                "Timestamp (GMT+7)": ts,
+                                "RAW_HEADER_HTML": raw_header_html,
+                                "Content": combined_content
+                            })
+                    status.write(f"✅ Page {p} Success.")
+                except Exception as e:
+                    status.write(f"❌ Page {p} Error: {e}")
+                time.sleep(1)
+        
+        if data:
+            st.session_state.df = pd.DataFrame(data)
+            st.rerun()
+
+# --- 5. INTERFACE ---
+if st.session_state.df is not None:
+    tab_data, tab_ai = st.tabs(["📊 Raw Data Inspection", "💬 AI Analyst"])
+    
+    with tab_data:
+        st.subheader(f"Raw Results: {len(st.session_state.df)} posts")
+        csv = st.session_state.df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Forensic CSV",
+            data=csv,
+            file_name=f"header_debug_page_{start_p}.csv",
+            mime='text/csv'
+        )
+        st.dataframe(st.session_state.df, use_container_width=True)
+
+    with tab_ai:
+        if st.button("📋 Run Full Intelligence Report"):
+            q = """Summarize those posts by answering these questions: 
+            1. What are the topics being discussed? 
+            2. What are the key points being made in each topic? (Refer to the quotes to see the context of the replies).
+            3. What brands and products are being mentioned? What are community's opinion about those brands or products? 
+            4. Please provide a product frequency list inside [DATA] tags.
+            
+            IMPORTANT: End with [DATA]Product:Count[DATA] for the chart.
+            """
+            st.session_state.messages.append({"role": "user", "content": q})
+            st.rerun()
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                clean_display = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
+                st.markdown(clean_display)
+                if msg["role"] == "assistant":
+                    draw_bar_chart(msg["content"])
+
+        if prompt := st.chat_input("Ask follow-up..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+
+# --- 6. AI LOGIC ---
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    with st.chat_message("assistant"):
+        context = ""
+        for _, row in st.session_state.df.iterrows():
+            context += f"[{row['Author']} at {row['Timestamp (GMT+7)']}]: {row['Content']}\n---\n"
+        
+        full_p = f"Forum Data:\n{context[:90000]}\n\nQuestion: {st.session_state.messages[-1]['content']}"
+        response = model.generate_content(full_p)
+        st.session_state.messages.append({"role": "assistant", "content": response.text})
+        st.rerun()
