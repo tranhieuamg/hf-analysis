@@ -10,7 +10,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIG ---
 st.set_page_config(page_title="Head-Fi Intelligence Pro", layout="wide")
-st.title("🎧 Head-Fi Intelligence Analyst v16.0")
+st.title("🎧 Head-Fi Intelligence Analyst v17.0")
 
 # Update this with your actual sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
@@ -43,19 +43,21 @@ def flexible_time_convert(val):
 def save_log_to_sheets(name, url, p_range):
     """Saves log specifically into Columns A, B, C, and D."""
     try:
-        # We create the exact 4 columns requested
         new_entry = pd.DataFrame([{
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "Staff": name,
             "URL": url,
             "Pages": p_range
         }])
-        # Force column order to ensure D doesn't become E
+        # Ensure only 4 columns exist and are in order
         new_entry = new_entry[["Timestamp", "Staff", "URL", "Pages"]]
         
+        # Read existing, append, and update WITHOUT index to keep Column D correct
         existing_data = conn.read(spreadsheet=SHEET_URL, ttl=0)
+        # Drop any empty/unnamed columns that might have sneaked in
+        existing_data = existing_data.loc[:, ~existing_data.columns.str.contains('^Unnamed')]
+        
         updated_data = pd.concat([existing_data, new_entry], ignore_index=True)
-        # index=False prevents an extra 'Unnamed' column at the start
         conn.update(spreadsheet=SHEET_URL, data=updated_data)
         return True
     except Exception as e:
@@ -63,7 +65,7 @@ def save_log_to_sheets(name, url, p_range):
         return False
 
 def draw_bar_chart(text):
-    """Robust regex for the [DATA] block."""
+    """Regex that triggers the bar chart from Gemini's [DATA] block."""
     match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
     if match:
         try:
@@ -89,7 +91,7 @@ with st.sidebar:
     end_p = st.number_input("End Page", min_value=1, value=33)
 
 # --- 4. THE SURGICAL NUCLEAR SCRAPER ---
-if st.button("🚀 Run Deep Scrape v16.0"):
+if st.button("🚀 Run Deep Scrape v17.0"):
     if not staff_name:
         st.error("Please enter your name!")
     else:
@@ -105,47 +107,46 @@ if st.button("🚀 Run Deep Scrape v16.0"):
                     posts = soup.find_all('article', class_='message--post')
                     
                     for post in posts:
-                        # --- 1. TARGETED TIMESTAMP (User Request: message-header) ---
-                        # We look for the header with the style you specified
+                        # --- 1. TIMESTAMP (Prioritize message-header per request) ---
                         msg_header = post.find('header', class_='message-header')
                         ts = "Unknown"
-                        
                         if msg_header:
                             time_el = msg_header.find('time') or msg_header.find('span', class_='u-dt')
                             if time_el:
-                                raw_val = (time_el.get('data-time') or 
-                                          time_el.get('datetime') or 
-                                          time_el.get('title'))
+                                raw_val = time_el.get('data-time') or time_el.get('datetime') or time_el.get('title')
                                 ts = flexible_time_convert(raw_val) if raw_val else time_el.get_text().strip()
                             else:
-                                # Fallback to any text inside that specific header
                                 ts = msg_header.get_text().strip()
 
-                        # Nuclear Fallback if header fails
                         if ts == "Unknown" or not ts:
                             t_el = post.find(lambda tag: tag.has_attr('data-time') or tag.has_attr('datetime'))
                             if t_el:
                                 ts = flexible_time_convert(t_el.get('data-time') or t_el.get('datetime'))
 
-                        # --- 2. CONTEXT CONTENT ---
+                        # --- 2. CONTENT (With Clean Flow Logic) ---
                         content_div = post.find('div', class_='bbWrapper')
                         combined_content = ""
                         if content_div:
-                            # Capture Images
+                            # Photo Capture
                             for img in content_div.find_all('img'):
                                 src = img.get('src') or img.get('data-src')
                                 if src and "http" in src and "smilies" not in src:
                                     images.append(src)
 
-                            # Conversation Flow
+                            # Identify Quotes
                             quotes = content_div.find_all('blockquote', class_='bbCodeBlock--quote')
                             q_list = [f"[QUOTED FROM {q.get('data-quote','Someone')}: {q.get_text(strip=True)}]" for q in quotes]
                             
+                            # Extract Reply (Clean copy)
                             temp_soup = BeautifulSoup(str(content_div), 'html.parser')
                             for q in temp_soup.find_all('blockquote'): q.decompose()
                             reply_only = temp_soup.get_text(separator=" ", strip=True)
                             
-                            combined_content = " ".join(q_list) + " | REPLY: " + reply_only
+                            # --- THE FIX: Only add 'REPLY:' if quotes exist ---
+                            if q_list:
+                                combined_content = " ".join(q_list) + " | REPLY: " + reply_only
+                            else:
+                                combined_content = reply_only
 
                         if combined_content:
                             data.append({
@@ -178,15 +179,19 @@ if st.session_state.df is not None:
             cols = st.columns(2)
             for i, img in enumerate(st.session_state.image_list):
                 cols[i % 2].image(img, use_container_width=True)
-        else: st.info("No photos found.")
+        else: st.info("No product photos found in these pages.")
 
     with t_chat:
         if st.button("📋 Run Full Intelligence Report"):
-            q = """Summarize the topics and conversation flow. Use the quoted blocks to understand context.
-            List products mentioned and community opinions. 
+            q = """Summarize the topics and conversation flow. Identify mentioned products and the community's opinions.
             
             FORMATTING RULE:
-            End with [DATA]Product:Count[DATA] for the chart. Only include counts > 1.
+            End your response with a product frequency count list wrapped in [DATA] tags.
+            Example:
+            [DATA]
+            Product Name: 5
+            Brand Name: 3
+            [DATA]
             """
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
@@ -207,7 +212,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
         ctx = ""
         for _, row in st.session_state.df.iterrows():
             ctx += f"[{row['Author']} at {row['Timestamp (GMT+7)']}]: {row['Content']}\n---\n"
-        full_p = f"Forum Data:\n{ctx[:90000]}\n\nQuestion: {st.session_state.messages[-1]['content']}"
+        full_p = f"Forum Context:\n{ctx[:90000]}\n\nQuestion: {st.session_state.messages[-1]['content']}"
         response = model.generate_content(full_p)
         st.session_state.messages.append({"role": "assistant", "content": response.text})
         st.rerun()
