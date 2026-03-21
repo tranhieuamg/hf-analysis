@@ -9,9 +9,10 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIG & PERSISTENCE ---
 st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
-st.title("🎧 Head-Fi Intelligence Analyst v4.0")
+st.title("🎧 Head-Fi Intelligence Analyst v5.0")
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
+# REPLACE THIS with your actual Google Sheet URL
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit"
 
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -21,7 +22,7 @@ if "image_list" not in st.session_state: st.session_state.image_list = []
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('models/gemini-2.5-flash')
 except Exception as e:
     st.error(f"Connection Error: {e}")
 
@@ -56,28 +57,28 @@ def save_log(name, url, p_range):
     except: pass
 
 def render_chart(text):
-    """Enhanced Regex to find [DATA] block even with extra spaces/newlines."""
-    # This regex is now much more 'forgiving' of Gemini's formatting
+    """Aggressive Regex to find the data block for the bar chart."""
     match = re.search(r"\[DATA\]\s*(.*?)\s*\[DATA\]", text, re.IGNORECASE | re.DOTALL)
     if match:
         try:
             raw_content = match.group(1).strip()
-            # Split by commas or newlines
             pairs = re.split(r'[,\n]', raw_content)
             items = []
             for p in pairs:
                 if ":" in p:
                     name, count = p.split(":", 1)
-                    items.append([name.strip(), int(re.sub(r'\D', '', count))])
+                    # Clean the count to make sure it's an integer
+                    clean_count = re.sub(r'\D', '', count)
+                    if clean_count:
+                        items.append([name.strip(), int(clean_count)])
             
             if items:
                 chart_df = pd.DataFrame(items, columns=["Product", "Mentions"])
                 st.subheader("📊 Product Mention Frequency")
                 st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
-        except Exception as e:
-            st.write(f"Chart Error: {e}")
+        except: pass
 
-# --- 4. THE SCRAPER (AGGRESSIVE TIMESTAMP FIX) ---
+# --- 4. THE SCRAPER (FIXED TIMESTAMP LOGIC) ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
         st.error("Please enter your name in the sidebar!")
@@ -95,17 +96,18 @@ if st.button("🚀 Start Deep Scrape"):
                         posts = soup.find_all('article', class_='message--post')
                         
                         for post in posts:
-                            # --- IMPROVED TIMESTAMP SCAVENGER ---
-                            # Look for 'time' tag or elements with class 'u-dt'
+                            # --- THE DEEP SCAVENGER TIMESTAMP FIX ---
+                            # XenForo hides time in multiple places depending on age
                             time_tag = post.find('time') or post.select_one('.u-dt')
                             ts = "Unknown"
                             if time_tag:
-                                # Head-Fi uses 'title' for absolute dates (e.g., 'Mar 7, 2026 at 11:00 AM')
-                                # and 'data-date-string' for mobile views.
+                                # Order of priority for most readable format
                                 ts = (time_tag.get('title') or 
                                       time_tag.get('data-date-string') or 
+                                      time_tag.get_text() or  # This gets 'Today at...' or 'Thursday at...'
                                       time_tag.get('datetime') or 
-                                      time_tag.text.strip())
+                                      time_tag.get('data-time') or 
+                                      "Unknown")
                             
                             content_div = post.find('div', class_='bbWrapper')
                             if content_div:
@@ -116,7 +118,7 @@ if st.button("🚀 Start Deep Scrape"):
                                 
                                 data.append({
                                     "Author": post.get('data-author', 'Unknown'),
-                                    "Timestamp": ts,
+                                    "Timestamp": ts.strip(),
                                     "Content": content_div.get_text(separator=" ", strip=True)
                                 })
                         status.write(f"✅ Page {p} success: {len(posts)} posts found.")
@@ -148,29 +150,29 @@ if st.session_state.df is not None:
 
     with t_chat:
         if st.button("📋 Run Full Intelligence Report"):
-            # RE-ENGINEERED PROMPT for consistent Chart Data
-            q = """Perform a comprehensive analysis of the provided forum posts:
-            1. Main Topics: List the core themes discussed.
-            2. Summary: Provide key points for each topic.
-            3. Brands/Products: Identify specific gear mentioned and summarize community sentiment.
-            4. Product Popularity: Count how many times each specific product model is mentioned.
+            q = """Analyze these forum posts and answer:
+            1. What are the key topics?
+            2. Summary of points for each topic.
+            3. Product/Brand mentions and community sentiment.
+            4. Provide a popularity list for the bar chart.
 
-            CRITICAL FORMATTING INSTRUCTION:
-            At the very end of your response, you MUST provide the product frequency data inside [DATA] tags exactly like this:
+            FORMATTING RULE:
+            At the end, you MUST include a list for the chart inside [DATA] tags.
+            Example:
             [DATA]
-            Product A: 5
-            Product B: 3
+            Product Name: 5
+            Brand Name: 3
             [DATA]
-            Only list products mentioned more than once. Use a new line for each product.
+            Only include items mentioned more than once.
             """
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
 
         for msg in st.session_state.messages:
-            # Clean text for display
-            clean = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.IGNORECASE | re.DOTALL)
+            # Hide the raw data from the chat window but use it for the chart
+            display_text = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.IGNORECASE | re.DOTALL)
             with st.chat_message(msg["role"]):
-                st.markdown(clean)
+                st.markdown(display_text)
                 if msg["role"] == "assistant": render_chart(msg["content"])
 
         if prompt := st.chat_input("Ask a follow-up..."):
@@ -182,12 +184,13 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     last_q = st.session_state.messages[-1]["content"]
     with st.chat_message("assistant"):
         with st.spinner("Gemini is analyzing..."):
+            # Include Author, Timestamp, and Content in the AI context
             context = ""
             for _, row in st.session_state.df.iterrows():
                 context += f"[{row['Author']} on {row['Timestamp']}]: {row['Content']}\n---\n"
             
             try:
-                full_p = f"Forum Context:\n{context[:90000]}\n\nUser Question: {last_q}"
+                full_p = f"Forum Data:\n{context[:90000]}\n\nQuestion: {last_q}"
                 response = model.generate_content(full_p)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
                 st.rerun()
