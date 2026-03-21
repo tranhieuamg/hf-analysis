@@ -75,25 +75,35 @@ def render_chart(text):
 # --- 4. THE SCRAPER (DETAILED STATUS & CANJAM TIMESTAMP FIX) ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
-        st.error("Please enter your name in the sidebar!")
+        st.error("Enter name in sidebar!")
     else:
         data, images = [], []
-       headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        # MAKE SURE THIS BLOCK IS INDENTED ONCE UNDER 'else'
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
             "Referer": "https://www.google.com/",
-            "DNT": "1", # Do Not Track
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"}        
+            "Connection": "keep-alive"
+        }
+        
         with st.status("Gathering Intelligence...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
                 url = target_url if p == 1 else f"{target_url}page-{p}"
+                
                 try:
-                    status.write(f"🌐 Fetching Page {p}...")
                     res = requests.get(url, headers=headers, timeout=15)
+                    
+                    # --- DEBUGGING LINE: THIS WILL TELL US IF WE ARE BLOCKED ---
+                    if res.status_code != 200:
+                        status.write(f"❌ Page {p}: Blocked by Head-Fi (Status {res.status_code})")
+                        continue # Skip to next page if blocked
+                    
                     soup = BeautifulSoup(res.text, 'html.parser')
                     posts = soup.find_all('article', class_='message--post')
+                    
+                    if not posts:
+                        status.write(f"⚠️ Page {p}: No posts found. (Security might be hiding them)")
                     
                     for post in posts:
                         # CANJAM TIMESTAMP FIX: Check data-date-string first
