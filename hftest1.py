@@ -9,32 +9,54 @@ from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Head-Fi Clean Analyst", layout="wide")
-st.title("🎧 Head-Fi Analyst: Original Content Mode")
+st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
+st.title("🎧 Head-Fi Intelligence Analyst v8.0")
 
+# PASTE YOUR GOOGLE SHEET URL HERE
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
+if "image_list" not in st.session_state: st.session_state.image_list = []
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('models/gemini-1.5-flash')
 except Exception as e:
-    st.error(f"Connection Error: {e}")
+    st.error(f"Setup Error: {e}")
 
 # --- 2. HELPERS ---
 def convert_to_gmt7(raw_val):
+    """Converts server time to GMT+7."""
     try:
+        # Check if Unix timestamp
         if str(raw_val).isdigit():
             dt = datetime.fromtimestamp(int(raw_val))
         else:
+            # Check if ISO format
             dt = datetime.fromisoformat(raw_val.replace('Z', '+00:00'))
-        vietnam_time = dt + timedelta(hours=7)
-        return vietnam_time.strftime("%b %d, %Y %I:%M %p")
+        
+        vn_time = dt + timedelta(hours=7)
+        return vn_time.strftime("%b %d, %Y %I:%M %p")
     except:
         return None
+
+def render_chart(text):
+    match = re.search(r"\[DATA\]\s*(.*?)\s*\[DATA\]", text, re.IGNORECASE | re.DOTALL)
+    if match:
+        try:
+            raw_content = match.group(1).strip()
+            items = []
+            for line in raw_content.split('\n'):
+                if ":" in line:
+                    name, count = line.split(":", 1)
+                    val = re.sub(r'\D', '', count)
+                    if val: items.append([name.strip(), int(val)])
+            if items:
+                st.subheader("📊 Product Mentions (GMT+7)")
+                st.bar_chart(pd.DataFrame(items, columns=["Product", "Count"]), x="Product", y="Count", color="#fbbf24")
+        except: pass
 
 # --- 3. SIDEBAR ---
 with st.sidebar:
@@ -46,72 +68,109 @@ with st.sidebar:
     start_p = st.number_input("Start Page", min_value=1, value=1)
     end_p = st.number_input("End Page", min_value=1, value=1)
 
-# --- 4. THE CLEAN SCRAPER (ANTI-QUOTE LOGIC) ---
-if st.button("🚀 Run Clean Scrape"):
+# --- 4. THE SURGICAL SCRAPER ---
+if st.button("🚀 Run Surgical Scrape"):
     if not staff_name:
         st.error("Please enter your name!")
     else:
-        data = []
+        data, images = [], []
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
         
-        with st.status("Extracting Original Content...", expanded=True) as status:
+        with st.status("Analyzing Thread Structure...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
-                current_url = base_url if p == 1 else f"{base_url}page-{p}"
+                url = base_url if p == 1 else f"{base_url}page-{p}"
                 try:
-                    res = requests.get(current_url, headers=headers, timeout=15)
+                    res = requests.get(url, headers=headers, timeout=15)
                     soup = BeautifulSoup(res.text, 'html.parser')
                     posts = soup.find_all('article', class_='message--post')
                     
                     for post in posts:
-                        # 1. Get the Correct Author (from the post header, not the quote)
-                        author = post.get('data-author', 'Unknown')
-                        
-                        # 2. Get the Correct Timestamp (Targeting the MAIN post time only)
-                        # We look for the <time> tag that is NOT inside a quote
-                        header_meta = post.find('div', class_='message-main')
-                        time_tag = header_meta.find('time', recursive=True) if header_meta else post.find('time')
-                        
+                        # --- STEP 1: FIND THE HEADER ONLY (To avoid quote times) ---
+                        header = post.find('header', class_='message-attribution')
                         ts = "Unknown"
-                        if time_tag:
-                            raw_val = time_tag.get('data-time') or time_tag.get('datetime')
-                            ts = convert_to_gmt7(raw_val) or time_tag.get_text().strip()
+                        if header:
+                            time_tag = header.find('time')
+                            if time_tag:
+                                # Prioritize machine-readable Unix/ISO time
+                                raw_time = time_tag.get('data-time') or time_tag.get('datetime')
+                                ts = convert_to_gmt7(raw_time) or time_tag.get_text().strip()
                         
-                        # 3. CLEAN CONTENT (The Anti-Quote Step)
+                        # --- STEP 2: FIND CONTENT & CLEAN QUOTES ---
                         content_div = post.find('div', class_='bbWrapper')
-                        original_text = ""
-                        
+                        clean_text = ""
                         if content_div:
-                            # --- CRITICAL FIX: Delete all quote blocks from the content ---
-                            for quote in content_div.find_all('blockquote', class_='bbCodeBlock--quote'):
-                                quote.decompose() # This removes the quote entirely from our 'content_div'
+                            # Capture images before deleting quotes
+                            for img in content_div.find_all('img'):
+                                img_url = img.get('src') or img.get('data-src')
+                                if img_url and "http" in img_url and "smilies" not in img_url:
+                                    images.append(img_url)
                             
-                            # Now get the remaining text (only what the author actually wrote)
-                            original_text = content_div.get_text(separator=" ", strip=True)
+                            # DECOMPOSE: Delete all quote blocks so AI doesn't see old data
+                            for quote in content_div.find_all('blockquote', class_='bbCodeBlock--quote'):
+                                quote.decompose()
+                            
+                            clean_text = content_div.get_text(separator=" ", strip=True)
                         
-                        # Only add if there is actual content left
-                        if original_text:
+                        # Save result
+                        if clean_text:
                             data.append({
-                                "Author": author,
+                                "Author": post.get('data-author', 'Unknown'),
                                 "Timestamp": ts,
-                                "Content": original_text
+                                "Content": clean_text
                             })
                     status.write(f"✅ Page {p} processed.")
                 except Exception as e:
                     status.write(f"⚠️ Page {p} error: {e}")
-                time.sleep(1)
+                time.sleep(1.2)
         
         st.session_state.df = pd.DataFrame(data)
+        st.session_state.image_list = list(dict.fromkeys(images))
         st.rerun()
 
 # --- 5. INTERFACE ---
 if st.session_state.df is not None:
-    st.subheader(f"Filtered Results ({len(st.session_state.df)} Original Posts)")
+    t_data, t_gallery, t_chat = st.tabs(["📊 Clean Data", "🖼️ Gallery", "💬 AI Analyst"])
     
-    csv = st.session_state.df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Clean CSV", csv, "clean_scrape.csv", "text/csv")
-    
-    st.dataframe(st.session_state.df, use_container_width=True)
+    with t_data:
+        csv = st.session_state.df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Raw CSV", csv, "headfi_data.csv", "text/csv")
+        st.dataframe(st.session_state.df, use_container_width=True)
 
-    if st.button("📋 Run AI Analysis on Original Text"):
-        # AI Logic to summarize only the fresh content...
-        pass
+    with t_gallery:
+        if st.session_state.image_list:
+            cols = st.columns(2)
+            for i, img in enumerate(st.session_state.image_list):
+                cols[i % 2].image(img, use_container_width=True)
+        else: st.info("No photos found.")
+
+    with t_chat:
+        if st.button("📋 Run Full Intelligence Report"):
+            q = "Summarize topics and product sentiment. End with [DATA]Product:Count[DATA]"
+            st.session_state.messages.append({"role": "user", "content": q})
+            st.rerun()
+
+        for msg in st.session_state.messages:
+            txt = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.S|re.I)
+            with st.chat_message(msg["role"]):
+                st.markdown(txt)
+                if msg["role"] == "assistant": render_chart(msg["content"])
+
+        if prompt := st.chat_input("Ask a follow-up..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+
+# --- 6. AI LOGIC ---
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    last_q = st.session_state.messages[-1]["content"]
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing..."):
+            context = ""
+            for _, row in st.session_state.df.iterrows():
+                context += f"[{row['Author']} at {row['Timestamp']}]: {row['Content']}\n---\n"
+            try:
+                full_p = f"Context:\n{context[:90000]}\n\nQuestion: {last_q}"
+                response = model.generate_content(full_p)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gemini Error: {e}")
