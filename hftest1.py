@@ -9,9 +9,8 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIG & PERSISTENCE ---
 st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
-st.title("🎧 Head-Fi Intelligence Analyst")
+st.title("🎧 Head-Fi Intelligence Analyst v4.0")
 
-# REPLACE THIS with your actual Google Sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
 if "df" not in st.session_state: st.session_state.df = None
@@ -33,12 +32,8 @@ with st.sidebar:
     
     st.divider()
     raw_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-canjam-new-york-2026-impressions-thread-march-7-8-2026.979675/")
-    
-    # --- URL CLEANING LOGIC ---
-    # This removes "/page-XX" from the end so the scraper can add its own page numbers
     base_url = re.sub(r'page-\d+/?$', '', raw_url)
-    if not base_url.endswith('/'):
-        base_url += '/'
+    if not base_url.endswith('/'): base_url += '/'
 
     if st.button("🔍 Check Total Pages"):
         res = requests.get(base_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -48,9 +43,8 @@ with st.sidebar:
         st.session_state.total_pages = int(last_page)
         st.success(f"Thread has {last_page} pages.")
 
-    c1, c2 = st.columns(2)
-    start_p = c1.number_input("Start", min_value=1, value=1)
-    end_p = c2.number_input("End", min_value=1, value=st.session_state.total_pages)
+    start_p = st.number_input("Start Page", min_value=1, value=1)
+    end_p = st.number_input("End Page", min_value=1, value=st.session_state.total_pages)
 
 # --- 3. HELPERS ---
 def save_log(name, url, p_range):
@@ -62,16 +56,28 @@ def save_log(name, url, p_range):
     except: pass
 
 def render_chart(text):
-    match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
+    """Enhanced Regex to find [DATA] block even with extra spaces/newlines."""
+    # This regex is now much more 'forgiving' of Gemini's formatting
+    match = re.search(r"\[DATA\]\s*(.*?)\s*\[DATA\]", text, re.IGNORECASE | re.DOTALL)
     if match:
         try:
-            items = [x.split(":") for x in match.group(1).strip().split(",") if ":" in x]
-            chart_df = pd.DataFrame(items, columns=["Product", "Mentions"])
-            chart_df["Mentions"] = pd.to_numeric(chart_df["Mentions"])
-            st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
-        except: pass
+            raw_content = match.group(1).strip()
+            # Split by commas or newlines
+            pairs = re.split(r'[,\n]', raw_content)
+            items = []
+            for p in pairs:
+                if ":" in p:
+                    name, count = p.split(":", 1)
+                    items.append([name.strip(), int(re.sub(r'\D', '', count))])
+            
+            if items:
+                chart_df = pd.DataFrame(items, columns=["Product", "Mentions"])
+                st.subheader("📊 Product Mention Frequency")
+                st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
+        except Exception as e:
+            st.write(f"Chart Error: {e}")
 
-# --- 4. THE SCRAPER ---
+# --- 4. THE SCRAPER (AGGRESSIVE TIMESTAMP FIX) ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
         st.error("Please enter your name in the sidebar!")
@@ -81,24 +87,23 @@ if st.button("🚀 Start Deep Scrape"):
         
         with st.status("Gathering Intelligence...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
-                # Construct clean URL
                 current_url = base_url if p == 1 else f"{base_url}page-{p}"
-                
                 try:
-                    status.write(f"🌐 Fetching: {current_url}")
                     res = requests.get(current_url, headers=headers, timeout=15)
-                    
                     if res.status_code == 200:
                         soup = BeautifulSoup(res.text, 'html.parser')
                         posts = soup.find_all('article', class_='message--post')
                         
                         for post in posts:
-                            # Enhanced Timestamp Scavenger
-                            time_tag = post.find('time')
+                            # --- IMPROVED TIMESTAMP SCAVENGER ---
+                            # Look for 'time' tag or elements with class 'u-dt'
+                            time_tag = post.find('time') or post.select_one('.u-dt')
                             ts = "Unknown"
                             if time_tag:
-                                ts = (time_tag.get('data-date-string') or 
-                                      time_tag.get('title') or 
+                                # Head-Fi uses 'title' for absolute dates (e.g., 'Mar 7, 2026 at 11:00 AM')
+                                # and 'data-date-string' for mobile views.
+                                ts = (time_tag.get('title') or 
+                                      time_tag.get('data-date-string') or 
                                       time_tag.get('datetime') or 
                                       time_tag.text.strip())
                             
@@ -114,12 +119,11 @@ if st.button("🚀 Start Deep Scrape"):
                                     "Timestamp": ts,
                                     "Content": content_div.get_text(separator=" ", strip=True)
                                 })
-                        status.write(f"✅ Page {p} success: Found {len(posts)} posts.")
+                        status.write(f"✅ Page {p} success: {len(posts)} posts found.")
                     else:
                         status.write(f"❌ Page {p} failed: HTTP {res.status_code}")
                 except Exception as e:
                     status.write(f"⚠️ Page {p} error: {e}")
-                
                 time.sleep(1.5)
             status.update(label="Scrape Complete!", state="complete")
         
@@ -144,13 +148,27 @@ if st.session_state.df is not None:
 
     with t_chat:
         if st.button("📋 Run Full Intelligence Report"):
-            q = """Summarize posts: 1. Topics? 2. Key points? 3. Brands/Opinions? 4. Product frequency list.
-            IMPORTANT: End with [DATA]Product:Count[DATA]"""
+            # RE-ENGINEERED PROMPT for consistent Chart Data
+            q = """Perform a comprehensive analysis of the provided forum posts:
+            1. Main Topics: List the core themes discussed.
+            2. Summary: Provide key points for each topic.
+            3. Brands/Products: Identify specific gear mentioned and summarize community sentiment.
+            4. Product Popularity: Count how many times each specific product model is mentioned.
+
+            CRITICAL FORMATTING INSTRUCTION:
+            At the very end of your response, you MUST provide the product frequency data inside [DATA] tags exactly like this:
+            [DATA]
+            Product A: 5
+            Product B: 3
+            [DATA]
+            Only list products mentioned more than once. Use a new line for each product.
+            """
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
 
         for msg in st.session_state.messages:
-            clean = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
+            # Clean text for display
+            clean = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.IGNORECASE | re.DOTALL)
             with st.chat_message(msg["role"]):
                 st.markdown(clean)
                 if msg["role"] == "assistant": render_chart(msg["content"])
@@ -163,13 +181,13 @@ if st.session_state.df is not None:
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     last_q = st.session_state.messages[-1]["content"]
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing..."):
+        with st.spinner("Gemini is analyzing..."):
             context = ""
             for _, row in st.session_state.df.iterrows():
-                context += f"[{row['Author']} at {row['Timestamp']}]: {row['Content']}\n---\n"
+                context += f"[{row['Author']} on {row['Timestamp']}]: {row['Content']}\n---\n"
             
             try:
-                full_p = f"Context Data:\n{context[:90000]}\n\nQuestion: {last_q}"
+                full_p = f"Forum Context:\n{context[:90000]}\n\nUser Question: {last_q}"
                 response = model.generate_content(full_p)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
                 st.rerun()
