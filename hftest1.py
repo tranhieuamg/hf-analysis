@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Head-Fi Intelligence v10.1", layout="wide")
-st.title("🎧 Head-Fi Intelligence (Nuclear Forensic Mode)")
+st.set_page_config(page_title="Head-Fi Forensic v11.0", layout="wide")
+st.title("🎧 Head-Fi Intelligence (Header Forensic Mode)")
 
 # Update this with your actual sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
@@ -20,7 +20,6 @@ if "messages" not in st.session_state: st.session_state.messages = []
 
 # Connections
 try:
-    # Use st.secrets or hardcode key for testing
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
@@ -40,7 +39,6 @@ def flexible_time_convert(val):
         return str(val).strip()
 
 def draw_bar_chart(text):
-    """Parses [DATA] block from Gemini for the bar chart."""
     match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
     if match:
         try:
@@ -49,7 +47,7 @@ def draw_bar_chart(text):
                 chart_df = pd.DataFrame(lines, columns=["Product", "Mentions"])
                 chart_df["Mentions"] = pd.to_numeric(chart_df["Mentions"])
                 st.subheader("📊 Product Mentions Frequency")
-                st.bar_chart(chart_df, x="Product", y="Mentions")
+                st.bar_chart(chart_df, x="Product", y="Count")
         except: pass
 
 # --- 3. SIDEBAR ---
@@ -58,14 +56,13 @@ with st.sidebar:
     staff_name = st.text_input("Staff Name:", placeholder="Hieu")
     raw_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-canjam-new-york-2026-impressions-thread-march-7-8-2026.979675/")
     
-    # URL Cleaning
     base_url = re.sub(r'page-\d+/?$', '', raw_url)
     if not base_url.endswith('/'): base_url += '/'
     
     start_p = st.number_input("Start Page", min_value=1, value=33)
     end_p = st.number_input("End Page", min_value=1, value=33)
 
-# --- 4. THE NUCLEAR SCRAPER ---
+# --- 4. THE NUCLEAR SCRAPER (FORENSIC UPDATED) ---
 if st.button("🚀 Run Nuclear Scrape"):
     if not staff_name:
         st.error("Please enter your name!")
@@ -73,7 +70,7 @@ if st.button("🚀 Run Nuclear Scrape"):
         data = []
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
         
-        with st.status("Performing Nuclear Scavenge...", expanded=True) as status:
+        with st.status("Performing Header Forensic Scan...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
                 url = f"{base_url}page-{p}"
                 try:
@@ -81,34 +78,37 @@ if st.button("🚀 Run Nuclear Scrape"):
                     soup = BeautifulSoup(res.text, 'html.parser')
                     posts = soup.find_all('article', class_='message--post')
                     
-                    if not posts:
-                        status.write(f"⚠️ Page {p}: No posts found.")
-                        continue
-
                     for post in posts:
-                        # --- FORENSIC STEP: GRAB RAW DATA BEFORE ANY FILTERS ---
-                        time_element = post.find(lambda tag: tag.has_attr('data-time') or tag.has_attr('datetime') or tag.has_attr('data-date-string'))
-                        raw_html_time = str(time_element) if time_element else "NOT_FOUND"
-
-                        # --- STEP 1: CLEAN QUOTES ---
+                        # --- STEP 1: SCAN SPECIFIC HEADER (User Request) ---
+                        # We look for the header tag with specific style/class
+                        msg_header = post.find('header', class_='message-header')
+                        raw_header_html = str(msg_header) if msg_header else "HEADER_NOT_FOUND"
+                        
+                        # --- STEP 2: CLEAN QUOTES ---
                         for quote in post.find_all('blockquote', class_='bbCodeBlock--quote'):
                             quote.decompose()
                         
-                        # --- STEP 2: PROCESS TIMESTAMP ---
+                        # --- STEP 3: FIND TIMESTAMP (Prioritize User's Header) ---
                         ts = "Unknown"
-                        if time_element:
-                            raw_val = (time_element.get('data-time') or 
-                                      time_element.get('datetime') or 
-                                      time_element.get('data-date-string') or 
-                                      time_element.get('title'))
-                            ts = flexible_time_convert(raw_val)
                         
-                        if ts == "Unknown":
-                            dt_element = post.select_one('.u-dt, .DateTime, .message-attribution-main')
-                            if dt_element:
-                                ts = dt_element.get_text().strip()
+                        # Search inside the specific header first
+                        if msg_header:
+                            time_el = msg_header.find('time') or msg_header.find('span', class_='u-dt')
+                            if time_el:
+                                raw_val = time_el.get('data-time') or time_el.get('datetime') or time_el.get('title')
+                                ts = flexible_time_convert(raw_val) if raw_val else time_el.get_text().strip()
+                            else:
+                                # If no tag, grab all text from header (last resort)
+                                ts = msg_header.get_text().strip()
 
-                        # --- STEP 3: CONTENT ---
+                        # Fallback to Nuclear Search if Header search failed
+                        if ts == "Unknown" or not ts:
+                            time_element = post.find(lambda tag: tag.has_attr('data-time') or tag.has_attr('datetime'))
+                            if time_element:
+                                raw_val = time_element.get('data-time') or time_element.get('datetime')
+                                ts = flexible_time_convert(raw_val)
+
+                        # --- STEP 4: CONTENT ---
                         author = post.get('data-author', 'Unknown')
                         content_div = post.find('div', class_='bbWrapper')
                         clean_text = content_div.get_text(separator=" ", strip=True) if content_div else ""
@@ -117,10 +117,10 @@ if st.button("🚀 Run Nuclear Scrape"):
                             data.append({
                                 "Author": author,
                                 "Timestamp (GMT+7)": ts,
-                                "RAW_TIME_TAG_CODE": raw_html_time, # Troubleshooting Column
+                                "RAW_HEADER_HTML": raw_header_html, # For your troubleshooting
                                 "Content": clean_text
                             })
-                    status.write(f"✅ Page {p} Success: Found {len(posts)} posts.")
+                    status.write(f"✅ Page {p} Success.")
                 except Exception as e:
                     status.write(f"❌ Page {p} Error: {e}")
                 time.sleep(1)
@@ -128,26 +128,24 @@ if st.button("🚀 Run Nuclear Scrape"):
         if data:
             st.session_state.df = pd.DataFrame(data)
             st.rerun()
-        else:
-            st.error("No data collected. Check URL or Bot Protection.")
 
 # --- 5. INTERFACE ---
 if st.session_state.df is not None:
     tab_data, tab_ai = st.tabs(["📊 Raw Data Inspection", "💬 AI Analyst"])
     
     with tab_data:
-        st.subheader(f"Raw Scrape Results: {len(st.session_state.df)} posts")
+        st.subheader(f"Raw Results: {len(st.session_state.df)} posts")
         
-        # TROUBLESHOOTING DOWNLOAD BUTTON
+        # TROUBLESHOOTING DOWNLOAD
         csv = st.session_state.df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Download Raw Data for Troubleshooting (CSV)",
+            label="📥 Download VERY RAW Data (Forensic CSV)",
             data=csv,
-            file_name=f"forensic_scrape_page_{start_p}.csv",
+            file_name=f"header_debug_page_{start_p}.csv",
             mime='text/csv'
         )
         
-        st.write("Inspect the **RAW_TIME_TAG_CODE** column to see the HTML Head-Fi sent.")
+        st.write("Check the **RAW_HEADER_HTML** column to see the code inside that center-aligned header.")
         st.dataframe(st.session_state.df, use_container_width=True)
 
     with tab_ai:
@@ -163,7 +161,6 @@ if st.session_state.df is not None:
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
 
-        # Render History
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 clean_display = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
