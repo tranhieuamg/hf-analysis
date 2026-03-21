@@ -9,9 +9,9 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. SETUP & CONFIG ---
 st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
-st.title("🎧 Head-Fi Mobile Intelligence")
+st.title("🎧 Head-Fi Intelligence (Mobile-Ready)")
 
-# URL of your Google Sheet
+# Replace with your actual Google Sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
 # Initialize Session States
@@ -19,22 +19,24 @@ if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
 if "total_pages" not in st.session_state: st.session_state.total_pages = 1
 if "image_list" not in st.session_state: st.session_state.image_list = []
+if "pending_preset" not in st.session_state: st.session_state.pending_preset = False
 
 # Connections
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('models/gemini-2.5-flash')
+    # UPDATED: Using the latest Gemini 3 Flash string
+    model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     st.error(f"Setup Error: {e}")
 
 # --- 2. SIDEBAR (CONTROLS) ---
 with st.sidebar:
     st.header("👤 Staff Activity")
-    staff_name = st.text_input("Name:", placeholder="Hieu")
+    staff_name = st.text_input("Staff Name:", placeholder="e.g. Hieu")
     
     st.divider()
-    target_url = st.text_input("URL:", "https://www.head-fi.org/threads/the-watercooler-impressions-philosophical-discussion-and-general-banter-index-on-first-page-all-welcome.957426/")
+    target_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-watercooler-impressions-philosophical-discussion-and-general-banter-index-on-first-page-all-welcome.957426/")
     
     if st.button("🔍 Check Total Pages"):
         res = requests.get(target_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -57,47 +59,48 @@ def save_log(name, url, p_range):
         conn.update(spreadsheet=SHEET_URL, data=updated)
     except: pass
 
-def draw_product_chart(text):
-    """Parses Gemini response for product counts and draws a bar chart."""
+def draw_frequency_chart(text):
+    """Parses text for [DATA] blocks and renders a bar chart."""
     try:
-        # We look for a pattern like [DATA] ProductA:5, ProductB:3 [DATA]
         match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
         if match:
-            data_str = match.group(1).strip()
-            pairs = [p.split(":") for p in data_str.split(",") if ":" in p]
-            chart_df = pd.DataFrame(pairs, columns=["Product", "Count"])
-            chart_df["Count"] = pd.to_numeric(chart_df["Count"])
-            st.subheader("📊 Product Mention Frequency")
-            st.bar_chart(data=chart_df, x="Product", y="Count")
-    except:
-        pass
+            raw_data = match.group(1).strip()
+            # Expecting format: BrandA:5, BrandB:3
+            items = [x.split(":") for x in raw_data.split(",") if ":" in x]
+            chart_df = pd.DataFrame(items, columns=["Product", "Mentions"])
+            chart_df["Mentions"] = pd.to_numeric(chart_df["Mentions"])
+            st.subheader("📊 Mentions Frequency")
+            st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
+    except: pass
 
-# --- 4. THE SCRAPER (DETAILED STATUS & FIXED TIMESTAMPS) ---
+# --- 4. DEEP SCRAPER (DETAILED PROGRESS & FIXED TIMESTAMPS) ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
-        st.error("Enter name in sidebar!")
+        st.error("Enter your name in the sidebar!")
     else:
         data, images = [], []
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
         
-        # DETAILED STATUS DISPLAY
         with st.status("Gathering Intelligence...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
                 url = target_url if p == 1 else f"{target_url}page-{p}"
                 try:
-                    res = requests.get(url, headers=headers, timeout=10)
+                    status.write(f"🌐 Fetching Page {p}...")
+                    res = requests.get(url, headers=headers, timeout=15)
                     if res.status_code == 200:
                         soup = BeautifulSoup(res.text, 'html.parser')
                         posts = soup.find_all('article', class_='message--post')
                         
                         for post in posts:
-                            # ROBUST TIMESTAMP FIX
+                            # ULTIMATE TIMESTAMP SCAVENGER
                             time_tag = post.find('time')
-                            # Check attributes in order of reliability
-                            ts = (time_tag.get('datetime') or 
-                                  time_tag.get('data-time') or 
-                                  time_tag.get('title') or 
-                                  time_tag.text.strip() if time_tag else "Unknown")
+                            ts = "Unknown"
+                            if time_tag:
+                                ts = (time_tag.get('datetime') or 
+                                      time_tag.get('data-time') or 
+                                      time_tag.get('data-datestring') or 
+                                      time_tag.get('title') or 
+                                      time_tag.text.strip())
                             
                             content_div = post.find('div', class_='bbWrapper')
                             if content_div:
@@ -111,20 +114,20 @@ if st.button("🚀 Start Deep Scrape"):
                                     "Timestamp": ts,
                                     "Content": content_div.get_text(separator=" ", strip=True)
                                 })
-                        status.write(f"✅ Page {p}: Success. Found {len(posts)} posts.")
+                        status.write(f"✅ Page {p} success ({len(posts)} posts)")
                     else:
-                        status.write(f"❌ Page {p}: Failed (Status {res.status_code})")
+                        status.write(f"❌ Page {p} failed (Error {res.status_code})")
                 except Exception as e:
-                    status.write(f"⚠️ Page {p}: Connection Error ({e})")
+                    status.write(f"⚠️ Page {p} connection error: {e}")
                 
                 time.sleep(1.2)
-            status.update(label="Scraping Complete!", state="complete")
+            status.update(label="Deep Scrape Complete!", state="complete")
         
         st.session_state.df = pd.DataFrame(data)
         st.session_state.image_list = list(dict.fromkeys(images))
         save_log(staff_name, target_url, f"{start_p}-{end_p}")
 
-# --- 5. INTERFACE ---
+# --- 5. INTERFACE TABS ---
 if st.session_state.df is not None:
     t_data, t_gallery, t_chat = st.tabs(["📊 Data", "🖼️ Gallery", "💬 AI Analyst"])
     
@@ -133,50 +136,62 @@ if st.session_state.df is not None:
 
     with t_gallery:
         if st.session_state.image_list:
-            cols = st.columns(2) # 2 columns is better for mobile
+            cols = st.columns(2) # 2 columns is best for mobile screens
             for i, img in enumerate(st.session_state.image_list):
                 cols[i % 2].image(img, use_container_width=True)
         else: st.info("No photos found.")
 
     with t_chat:
-        # --- PRESET PROMPT BUTTON (MOBILE OPTIMIZED) ---
-        st.subheader("Preset Reports")
+        # MOBILE PRESET BUTTON
+        st.subheader("One-Tap Report")
         if st.button("📋 Run Full Intelligence Report"):
-            preset_query = """
-            Summarize those posts by answering these questions:
-            1. What are the topics being discussed?
-            2. What are the key points being made in each topic?
-            3. What brands and products are being mentioned? What are community's opinion about those brands or products?
-            
-            IMPORTANT: At the very end of your response, provide a data block in exactly this format:
-            [DATA] Product Name:Mention Count, Product Name:Mention Count [DATA]
-            Only include products mentioned more than once.
-            """
-            st.session_state.messages.append({"role": "user", "content": preset_query})
+            st.session_state.pending_preset = True
+            st.rerun()
 
-        st.divider()
+        # Display Message History
         for msg in st.session_state.messages:
-            if "[DATA]" not in msg["content"]: # Don't show the messy data block to user
+            if "[DATA]" not in msg["content"]: # Hide the raw data block from the chat
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
-                    # If it's the assistant, try to draw the chart
                     if msg["role"] == "assistant":
-                        draw_product_chart(msg["content"])
+                        draw_frequency_chart(msg["content"])
 
+        # Chat Input (Always at bottom)
         if prompt := st.chat_input("Ask a follow-up..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
 
 # --- 6. AI LOGIC (OUTSIDE TABS) ---
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    with st.chat_message("assistant"):
-        with st.spinner("Processing..."):
-            context = ""
-            for _, row in st.session_state.df.iterrows():
-                context += f"[{row['Author']}]: {row['Content']}\n---\n"
-            
-            full_p = f"Forum Data:\n{context[:80000]}\n\nQuestion: {st.session_state.messages[-1]['content']}"
-            response = model.generate_content(full_p)
-            st.markdown(response.text)
-            draw_product_chart(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-            st.rerun()
+if st.session_state.df is not None:
+    # Handle Preset Report OR User Prompt
+    query = ""
+    if st.session_state.pending_preset:
+        query = """
+        Summarize those posts by answering these questions: 
+        1. what are the topics being discussed? 
+        2. what are the key points being made in each topic? 
+        3. what brands and products are being mentioned? What are community's opinion about those brands or products? 
+        
+        Lastly, create a simple list of products/brands mentioned more than once.
+        IMPORTANT: At the very end, add a block like this for my chart:
+        [DATA]ProductA:5,ProductB:3[DATA]
+        """
+        st.session_state.pending_preset = False
+    elif st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        query = st.session_state.messages[-1]["content"]
+
+    if query:
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing thread data..."):
+                context = ""
+                for _, row in st.session_state.df.iterrows():
+                    context += f"[{row['Author']}]: {row['Content']}\n---\n"
+                
+                full_p = f"Context:\n{context[:90000]}\n\nQuestion: {query}"
+                try:
+                    response = model.generate_content(full_p)
+                    st.markdown(response.text)
+                    draw_frequency_chart(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"Gemini Error: {e}")
