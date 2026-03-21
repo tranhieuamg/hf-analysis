@@ -8,19 +8,17 @@ import re
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIG & PERSISTENCE ---
-st.set_page_config(page_title="Head-Fi Intelligence Pro", layout="wide")
+st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
 st.title("🎧 Head-Fi Intelligence Analyst")
 
 # REPLACE THIS with your actual Google Sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
-# Initialize Session Memory
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
 if "total_pages" not in st.session_state: st.session_state.total_pages = 1
 if "image_list" not in st.session_state: st.session_state.image_list = []
 
-# Connections
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -28,16 +26,22 @@ try:
 except Exception as e:
     st.error(f"Connection Error: {e}")
 
-# --- 2. SIDEBAR (CONTROLS) ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("👤 Staff Activity")
     staff_name = st.text_input("Staff Name:", placeholder="Hieu")
     
     st.divider()
-    target_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-canjam-new-york-2026-impressions-thread-march-7-8-2026.979675/page-37")
+    raw_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-canjam-new-york-2026-impressions-thread-march-7-8-2026.979675/")
     
+    # --- URL CLEANING LOGIC ---
+    # This removes "/page-XX" from the end so the scraper can add its own page numbers
+    base_url = re.sub(r'page-\d+/?$', '', raw_url)
+    if not base_url.endswith('/'):
+        base_url += '/'
+
     if st.button("🔍 Check Total Pages"):
-        res = requests.get(target_url, headers={"User-Agent": "Mozilla/5.0"})
+        res = requests.get(base_url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(res.text, 'html.parser')
         pagination = soup.find_all('li', class_='pageNav-page')
         last_page = pagination[-1].text.strip().replace(',', '') if pagination else "1"
@@ -58,7 +62,6 @@ def save_log(name, url, p_range):
     except: pass
 
 def render_chart(text):
-    """Finds [DATA] block and draws the bar chart."""
     match = re.search(r"\[DATA\](.*?)\[DATA\]", text, re.DOTALL)
     if match:
         try:
@@ -68,34 +71,29 @@ def render_chart(text):
             st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
         except: pass
 
-# --- 4. SCRAPER ENGINE ---
+# --- 4. THE SCRAPER ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
         st.error("Please enter your name in the sidebar!")
     else:
         data, images = [], []
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Referer": "https://www.google.com/"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"}
         
         with st.status("Gathering Intelligence...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
-                url = target_url if p == 1 else f"{target_url}page-{p}"
+                # Construct clean URL
+                current_url = base_url if p == 1 else f"{base_url}page-{p}"
+                
                 try:
-                    status.write(f"🌐 Fetching Page {p}...")
-                    res = requests.get(url, headers=headers, timeout=15)
+                    status.write(f"🌐 Fetching: {current_url}")
+                    res = requests.get(current_url, headers=headers, timeout=15)
                     
                     if res.status_code == 200:
                         soup = BeautifulSoup(res.text, 'html.parser')
                         posts = soup.find_all('article', class_='message--post')
                         
-                        if not posts:
-                            status.write(f"⚠️ Page {p}: Loaded, but no posts found. Security check active?")
-                        
                         for post in posts:
-                            # Robust Timestamp Logic (Prioritizing data-date-string for CanJam)
+                            # Enhanced Timestamp Scavenger
                             time_tag = post.find('time')
                             ts = "Unknown"
                             if time_tag:
@@ -106,7 +104,6 @@ if st.button("🚀 Start Deep Scrape"):
                             
                             content_div = post.find('div', class_='bbWrapper')
                             if content_div:
-                                # Gallery Collection
                                 for img in content_div.find_all('img'):
                                     img_url = img.get('src') or img.get('data-src')
                                     if img_url and "http" in img_url and "smilies" not in img_url:
@@ -119,7 +116,7 @@ if st.button("🚀 Start Deep Scrape"):
                                 })
                         status.write(f"✅ Page {p} success: Found {len(posts)} posts.")
                     else:
-                        status.write(f"❌ Page {p} failed: HTTP Status {res.status_code}")
+                        status.write(f"❌ Page {p} failed: HTTP {res.status_code}")
                 except Exception as e:
                     status.write(f"⚠️ Page {p} error: {e}")
                 
@@ -128,10 +125,10 @@ if st.button("🚀 Start Deep Scrape"):
         
         st.session_state.df = pd.DataFrame(data)
         st.session_state.image_list = list(dict.fromkeys(images))
-        save_log(staff_name, target_url, f"{start_p}-{end_p}")
+        save_log(staff_name, base_url, f"{start_p}-{end_p}")
         st.rerun()
 
-# --- 5. MAIN INTERFACE ---
+# --- 5. INTERFACE ---
 if st.session_state.df is not None:
     t_data, t_gallery, t_chat = st.tabs(["📊 Data", "🖼️ Gallery", "💬 AI Analyst"])
     
@@ -143,40 +140,30 @@ if st.session_state.df is not None:
             cols = st.columns(2)
             for i, img in enumerate(st.session_state.image_list):
                 cols[i % 2].image(img, use_container_width=True)
-        else:
-            st.info("No photos found in these pages.")
+        else: st.info("No photos found.")
 
     with t_chat:
-        # MOBILE PRESET BUTTON
         if st.button("📋 Run Full Intelligence Report"):
-            q = """Summarize posts: 
-            1. What are the topics discussed? 
-            2. What are the key points in each? 
-            3. What brands/products are mentioned and what is the sentiment? 
-            4. Provide product frequency.
-            
-            IMPORTANT: End with exactly [DATA]ProductA:5,ProductB:3[DATA]"""
+            q = """Summarize posts: 1. Topics? 2. Key points? 3. Brands/Opinions? 4. Product frequency list.
+            IMPORTANT: End with [DATA]Product:Count[DATA]"""
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
 
-        # FIXED CHAT HISTORY RENDERING
         for msg in st.session_state.messages:
-            clean_text = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
+            clean = re.sub(r"\[DATA\].*?\[DATA\]", "", msg["content"], flags=re.DOTALL)
             with st.chat_message(msg["role"]):
-                st.markdown(clean_text)
-                if msg["role"] == "assistant":
-                    render_chart(msg["content"])
+                st.markdown(clean)
+                if msg["role"] == "assistant": render_chart(msg["content"])
 
-        # CHAT INPUT
         if prompt := st.chat_input("Ask a follow-up..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.rerun()
 
-# --- 6. AI LOGIC (OUTSIDE TABS) ---
+# --- 6. AI LOGIC ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     last_q = st.session_state.messages[-1]["content"]
     with st.chat_message("assistant"):
-        with st.spinner("Gemini is reading the thread..."):
+        with st.spinner("Analyzing..."):
             context = ""
             for _, row in st.session_state.df.iterrows():
                 context += f"[{row['Author']} at {row['Timestamp']}]: {row['Content']}\n---\n"
@@ -187,4 +174,4 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
                 st.rerun()
             except Exception as e:
-                st.error(f"Gemini API Error: {e}")
+                st.error(f"Gemini Error: {e}")
