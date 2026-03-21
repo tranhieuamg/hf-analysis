@@ -8,11 +8,12 @@ import re
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. CONFIG ---
+# --- 1. CONFIG & PERSISTENCE ---
 st.set_page_config(page_title="Head-Fi Pro Analyst", layout="wide")
-st.title("🎧 Head-Fi Intelligence Analyst v6.0 (GMT+7)")
+st.title("🎧 Head-Fi Intelligence Analyst v7.0")
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit"
+# REPLACE THIS with your actual Google Sheet URL
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1KUXNdSX87XaRipnqD7UumkFnuAKUIejXBhtTt-3jYOc/edit?gid=0#gid=0"
 
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -49,20 +50,17 @@ with st.sidebar:
 
 # --- 3. THE GMT+7 CONVERTER ---
 def convert_to_gmt7(raw_val):
-    """Converts Unix timestamps or ISO strings to GMT+7 format."""
     try:
-        # If it's a Unix timestamp (numbers)
-        if raw_val.isdigit():
+        if str(raw_val).isdigit():
             dt = datetime.fromtimestamp(int(raw_val))
-        # If it's an ISO string (2026-03-21T...)
         else:
             dt = datetime.fromisoformat(raw_val.replace('Z', '+00:00'))
         
-        # Adjust to GMT+7 (assuming server is UTC)
+        # Adjust to GMT+7
         vietnam_time = dt + timedelta(hours=7)
         return vietnam_time.strftime("%b %d, %Y %I:%M %p")
     except:
-        return raw_val # Fallback to raw text if conversion fails
+        return raw_val
 
 def render_chart(text):
     match = re.search(r"\[DATA\]\s*(.*?)\s*\[DATA\]", text, re.IGNORECASE | re.DOTALL)
@@ -83,17 +81,13 @@ def render_chart(text):
                 st.bar_chart(chart_df, x="Product", y="Mentions", color="#fbbf24")
         except: pass
 
-# --- 4. THE SCRAPER (GMT+7 UPDATED) ---
+# --- 4. THE SCRAPER ---
 if st.button("🚀 Start Deep Scrape"):
     if not staff_name:
         st.error("Please enter your name in the sidebar!")
     else:
         data, images = [], []
-        # Mimic a browser in GMT+7 region
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
-            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
         
         with st.status("Gathering Intelligence...", expanded=True) as status:
             for p in range(int(start_p), int(end_p) + 1):
@@ -104,16 +98,14 @@ if st.button("🚀 Start Deep Scrape"):
                     posts = soup.find_all('article', class_='message--post')
                     
                     for post in posts:
-                        # --- THE ULTIMATE GMT+7 FIX ---
                         time_tag = post.find('time')
                         ts = "Unknown"
                         if time_tag:
-                            # 1. Look for Unix Timestamp (data-time)
+                            # Direct check for attributes that provide absolute time
                             raw_time = time_tag.get('data-time') or time_tag.get('datetime')
                             if raw_time:
                                 ts = convert_to_gmt7(raw_time)
                             else:
-                                # 2. Fallback to visible text (Today at...)
                                 ts = time_tag.get_text().strip()
                         
                         content_div = post.find('div', class_='bbWrapper')
@@ -138,11 +130,23 @@ if st.button("🚀 Start Deep Scrape"):
         st.session_state.image_list = list(dict.fromkeys(images))
         st.rerun()
 
-# --- 5. INTERFACE ---
+# --- 5. INTERFACE (DOWNLOAD ADDED HERE) ---
 if st.session_state.df is not None:
-    t_data, t_gallery, t_chat = st.tabs(["📊 Data", "🖼️ Gallery", "💬 AI Analyst"])
+    t_data, t_gallery, t_chat = st.tabs(["📊 Raw Data", "🖼️ Gallery", "💬 AI Analyst"])
     
     with t_data:
+        st.subheader("Inspection Table")
+        
+        # --- NEW DOWNLOAD BUTTON ---
+        csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Raw Scraped Data (CSV)",
+            data=csv_data,
+            file_name=f"headfi_scrape_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime='text/csv',
+            help="Click to save the scraped forum posts to your device before analysis."
+        )
+        
         st.dataframe(st.session_state.df, use_container_width=True)
 
     with t_gallery:
@@ -172,7 +176,7 @@ if st.session_state.df is not None:
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     last_q = st.session_state.messages[-1]["content"]
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing..."):
+        with st.spinner("Gemini is analyzing..."):
             context = ""
             for _, row in st.session_state.df.iterrows():
                 context += f"[{row['Author']} at {row['Timestamp']}]: {row['Content']}\n---\n"
