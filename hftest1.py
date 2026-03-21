@@ -7,21 +7,21 @@ import time
 import re
 from datetime import datetime, timedelta
 
-# --- 1. SETUP ---
-st.set_page_config(page_title="Head-Fi Intelligence Pro", layout="wide")
-st.title("🎧 Head-Fi Intelligence (Conversation Flow Mode)")
+# --- 1. SETUP & SESSION ---
+st.set_page_config(page_title="Head-Fi Context Pro", layout="wide")
+st.title("🎧 Head-Fi Intelligence (Context & Flow Mode)")
 
 if "df" not in st.session_state: st.session_state.df = None
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# Connections
+# AI Connection
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error(f"API Configuration Error: {e}")
+    st.error(f"AI Setup Error: {e}")
 
-# --- 2. THE GMT+7 ENGINE (REVERTED TO WORKING V10.1) ---
+# --- 2. WORKING v10.1 TIME CONVERTER ---
 def flexible_time_convert(val):
     if not val: return None
     try:
@@ -52,6 +52,7 @@ with st.sidebar:
     staff_name = st.text_input("Staff Name:", placeholder="Hieu")
     raw_url = st.text_input("Thread URL:", "https://www.head-fi.org/threads/the-canjam-new-york-2026-impressions-thread-march-7-8-2026.979675/")
     
+    # URL Cleaning
     base_url = re.sub(r'page-\d+/?$', '', raw_url)
     if not base_url.endswith('/'): base_url += '/'
     
@@ -79,18 +80,22 @@ if st.button("🚀 Run Conversation Scrape"):
                         continue
 
                     for post in posts:
-                        # --- STEP 1: AUTHOR & TIMESTAMP ---
+                        # --- A. AUTHOR & TIMESTAMP (v10.1 Nuclear Logic) ---
                         author = post.get('data-author', 'Unknown')
-                        
-                        # Use the working v10.1 "Nuclear" timestamp logic
                         time_element = post.find(lambda tag: tag.has_attr('data-time') or tag.has_attr('datetime'))
-                        ts = "Unknown"
-                        if time_element:
-                            raw_val = time_element.get('data-time') or time_element.get('datetime')
-                            ts = flexible_time_convert(raw_val)
                         
-                        # --- STEP 2: CONTENT & QUOTE HANDLING ---
+                        ts = "Unknown"
+                        raw_ts_html = str(time_element) if time_element else "NOT_FOUND"
+                        
+                        if time_element:
+                            raw_val = time_element.get('data-time') or time_element.get('datetime') or time_element.get('data-date-string') or time_element.get('title')
+                            ts = flexible_time_convert(raw_val)
+
+                        # --- B. CONTENT & QUOTE HANDLING ---
                         content_div = post.find('div', class_='bbWrapper')
+                        full_context = ""
+                        raw_content_html = str(content_div) if content_div else "EMPTY"
+                        
                         if content_div:
                             # 1. Capture Quoted Messages
                             quotes = content_div.find_all('blockquote', class_='bbCodeBlock--quote')
@@ -100,11 +105,11 @@ if st.button("🚀 Run Conversation Scrape"):
                                 q_text = q.get_text(strip=True)
                                 quote_summary.append(f"[QUOTED FROM {q_author}: {q_text}]")
                             
-                            # 2. Get the Actual Reply (Delete quotes in a copy)
+                            # 2. Extract Original Reply (Work on a copy to keep original clean)
                             temp_soup = BeautifulSoup(str(content_div), 'html.parser')
                             for q in temp_soup.find_all('blockquote'):
                                 q.decompose()
                             reply_only = temp_soup.get_text(separator=" ", strip=True)
                             
                             # 3. Combine for Gemini
-                            full_context = " ".join(quote_summary) + " | REPLY: " + reply_only
+                            if quote_summary:
